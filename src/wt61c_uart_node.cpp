@@ -1,25 +1,40 @@
 #include "ros/ros.h"
 #include "wt61c_uart.h"
 #include "serial/serial.h"
-#include <time.h>
 
-int main(int argc, char** argv)
+int main(int argc, char **argv)
 {
-	ros::init(argc, argv, "Wt61cUart_node");
+	ros::init(argc, argv, "wt61c_uart_node");
+	ros::NodeHandle nh("~");
 
-	ros::NodeHandle n;
+	WTU::Wt61cUart wt61c_uart(nh); // initilize the uart parameter
 
-	WTU::Wt61cUart wt61cuart(n);    //initilize the uart parameter
-	
-	while(wt61cuart.UartInit()){
-		sleep(1);}      //declare the uart port
+	while (!wt61c_uart.initialize())
+	{
+		ROS_ERROR("Unable to initialize WT61C IMU, retrying in 1 second.");
+		wt61c_uart.shutdown();
+		ros::Duration(1.0).sleep();
+	}
 
-	ros::Rate loop_rate(1000);
+	ros::Rate loop_rate(200);
 
-	while(ros::ok()){
-		wt61cuart.GetAndCheck();
-		wt61cuart.TranslateAndPub();
-		
+	while (ros::ok() && !ros::isShuttingDown())
+	{
+		try
+		{
+			wt61c_uart.retrieveData();
+			if (wt61c_uart.verifyChecksum())
+				wt61c_uart.decodeAndPublish();
+			else
+				ROS_WARN("[WT61C IMU] Wrong Checksum");
+			wt61c_uart.clearBuffer();
+		}
+		catch (const std::runtime_error &e)
+		{
+			ROS_ERROR("std::runtime error: %s, restart in 1 second.", e.what());
+			ros::Duration(1.0).sleep();
+			wt61c_uart.initialize();
+		}
 		loop_rate.sleep();
 	}
 	return 0;

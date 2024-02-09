@@ -1,5 +1,5 @@
-#ifndef WT61CUART_H
-#define WT61CUART_H
+#ifndef WT61C_UART_H
+#define WT61C_UART_H
 
 #include <vector>
 #include <math.h>
@@ -7,34 +7,37 @@
 
 #include "ros/ros.h"
 #include "serial/serial.h"
-#include "std_msgs/String.h"
-#include "std_msgs/Empty.h"
 #include "sensor_msgs/Imu.h"
-// #include "geometry_msgs/Twist.h"
-#include "tf/LinearMath/Quaternion.h"
 
-#define PI 3.14159
-
-namespace WTU {
-
-	class Wt61cUart {
-	private:
-		int baudrate_,index_;
-		std::string com_;
-		serial::Serial ser;
-		
-		double g_;
-		std::vector<uint8_t> UartData_;
-		
-		std::string topic_pub_;
-		ros::Publisher wt61c_pub_;
-		// ros::Publisher wt61c_turtle_;
+namespace WTU
+{
+	class Wt61cUart
+	{
 	public:
-		Wt61cUart(ros::NodeHandle&);
+		Wt61cUart(ros::NodeHandle &);
 		~Wt61cUart();
-		int TranslateAndPub();
-		int UartInit();
-		int GetAndCheck();
+		bool initialize();
+		void shutdown();
+
+		void retrieveData();
+		bool isHeaderIndexValid() const;
+		bool isSizeValid() const;
+		bool isPacketValid() const;
+		bool verifyChecksum() const;
+
+		void clearBuffer();
+		void decodeAndPublish();
+
+	private:
+		std::string dev_path_;
+		int baud_;
+
+		/* Serial Instance*/
+		serial::Serial serial_;
+		std::vector<uint8_t> uart_data_;
+		unsigned int header_index_;
+
+		ros::Publisher pub_;
 	};
 }
 #endif

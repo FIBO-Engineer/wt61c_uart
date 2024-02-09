@@ -1,154 +1,144 @@
 #include "wt61c_uart.h"
+#include <tf2_geometry_msgs/tf2_geometry_msgs.h>
 
-WTU::Wt61cUart::Wt61cUart( ros::NodeHandle& nh){
-//Get parameter from parameter service and initialize the other parameter.
-	nh.getParamCached("/sensor_uart/uart_com", com_);
-	nh.getParamCached("/sensor_uart/uart_baudrate",baudrate_);
-	nh.getParamCached("/sensor_uart/g", g_);
-	nh.getParamCached("topic_pub", topic_pub_);
-	index_ = 0;
+WTU::Wt61cUart::Wt61cUart(ros::NodeHandle &nh)
+{
+	// Retrieve parameters without specifying the node name and without using getParamCached
+	nh.param<std::string>("dev_path", dev_path_, "/dev/ttyUSB0");
+	nh.param<int>("baud", baud_, 115200);
 
-	//delcare the pub object
-	wt61c_pub_ = nh.advertise<sensor_msgs::Imu>(topic_pub_, 1);
-	// wt61c_turtle_ = nh.advertise<geometry_msgs::Twist>("turtle1/cmd_vel", 1);
-}
-//
-WTU::Wt61cUart::~Wt61cUart(){
-	ser.close();
-	std::cout<< "The Uart port has been closed."<<std::endl;
+	pub_ = nh.advertise<sensor_msgs::Imu>("/imu/data", 1);
 }
 
-		//initialize the UART port.
-int WTU::Wt61cUart::UartInit() {
-	try{
-		
-		ser.setPort(com_);
-	
-		ser.setBaudrate(baudrate_);
-		serial::Timeout to = serial::Timeout::simpleTimeout(1000);
-		ser.setTimeout(to);
-		ser.open();                           // try to open the port
-	}
-	catch(serial::IOException& e){
-		ROS_ERROR_STREAM("Unable to open port. Please try again.");
-		return 1;
-	}
-	//Detects if the port is open
-	if(ser.isOpen()) {
-		//ser.flushInput();
-		ROS_INFO_STREAM("The port initialize succeed.");
-		ser.flushInput();
-		sleep(0.1);
-		return 0;
-	}
-	else
-		return 1;
-
+WTU::Wt61cUart::~Wt61cUart()
+{
+	shutdown();
 }
 
+bool WTU::Wt61cUart::initialize()
+{
+	try
+	{
+		serial_.setPort(dev_path_);									   // Set the device path for the serial port
+		serial_.setBaudrate(baud_);									   // Set the baud rate for the serial port
+		serial::Timeout timeout = serial::Timeout::simpleTimeout(100); // Set a simple timeout of 500ms for the serial port
+		serial_.setTimeout(timeout);								   // Apply the timeout settings to the serial port
+		serial_.open();												   // Attempt to open the serial port
 
-// read data function
-int WTU::Wt61cUart::GetAndCheck() {
-
-	int i,j;
-	int sum = 0x55;
-
-	while(UartData_.size()-index_<33) {
-		while(ser.available()<33){ROS_INFO("wait");}
-		ser.read(UartData_,ser.available());
-	}
-	while(true) {
-		if(UartData_[index_] ==0x55 && UartData_[index_+1] ==0x51) {
-			//SRC check
-			for (i= 1; i<10; i++)
-				sum+= UartData_[index_+i];
-			if(UartData_[index_+10] == sum%0x100)
-				j = 1;
-			sum = 0x55;
-			for (i= 12; i<21; i++)
-				sum+= UartData_[index_+i];
-			if(UartData_[index_+21] == sum%0x100)
-				j++;
-			sum = 0x55;
-			for (i= 23; i<32; i++)
-				sum+= UartData_[index_+i];
-			if(UartData_[index_+32] == sum%0x100)
-				j++;
-			if (j = 3) {
-				ROS_INFO("Yes,I got a complete package.");
-				return 0;
-			}
-			else {
-				sum = 0x55;
-				index_++;
-			}
+		if (serial_.isOpen()) // Check if the serial port was successfully opened
+		{
+			ROS_INFO_STREAM("[WT61C IMU] Serial port initialized successfully.");
+			serial_.flushInput(); // Clear the input buffer to ensure clean communication
+			return true;		  // Return true to indicate success
 		}
 		else
-			index_++;
-		while(UartData_.size()-index_-32<33) {
-			while(ser.available()<33) {}
-			ser.read(UartData_,ser.available());
+		{
+			ROS_ERROR_STREAM("[WT61C IMU] Serial port failed to open.");
+			return false; // Return false if the port did not open successfully
 		}
-	}	
+	}
+	catch (const serial::IOException &e)
+	{
+		ROS_ERROR_STREAM("[WT61C IMU] IOException on opening serial port: " << e.what());
+		return false; // Return false upon catching an exception, indicating failure to initialize
+	}
+	catch (const std::exception &e) // Catch other std exceptions
+	{
+		ROS_ERROR_STREAM("[WT61C IMU] Exception on opening serial port: " << e.what());
+		return false; // Return false, indicating failure
+	}
+	catch (...) // Catch all other exceptions
+	{
+		ROS_ERROR_STREAM("[WT61C IMU] Unknown exception on opening serial port.");
+		return false; // Return false, indicating failure
+	}
 }
 
-// translate UartDate to Imu date,and pub
-int WTU::Wt61cUart::TranslateAndPub() {
-	sensor_msgs::Imu wt61c_imu;                //declare the pub message
-	// geometry_msgs::Twist turtle;
-	double linear_acceleration[2],angular_velocity[2],orientation[2];
+void WTU::Wt61cUart::shutdown()
+{
+	std::cout << "[WT61C IMU] Shutting down." << std::endl;
+	if (serial_.isOpen())
+	{
+		serial_.close();
+		std::cout << "[WT61C IMU] Serial port closed." << std::endl;
+	}
+}
 
-	wt61c_imu.header.stamp = ros::Time::now();
-	wt61c_imu.header.frame_id = "wt61c_uart";
-	tf::Quaternion quate;
+// read data function
+void WTU::Wt61cUart::retrieveData()
+{
+	constexpr int packet_size = 33;
+	while (serial_.waitReadable())
+	{
+		serial_.read(uart_data_, serial_.available());
+		if (uart_data_.size() >= packet_size)
+		{
+			for (int i = 0; i < uart_data_.size(); i++)
+			{
+				if (uart_data_.size() - i >= packet_size && uart_data_[i] == 0x55 && uart_data_[i + 1] == 0x51)
+				{
+					header_index_ = i;
+					return;
+				}
+			}
+			throw std::runtime_error("Unable to find header index.");
+		}
+	}
+	throw std::runtime_error("Serial port not readable (timeout or interruption).");
+}
 
-	linear_acceleration[0] = ( short (UartData_[index_+ 3]<< 8 | UartData_[index_+ 2]))/ 32768.0* 16.0* 9.8;
-	linear_acceleration[1] = ( short (UartData_[index_+ 5]<< 8 | UartData_[index_+ 4]))/ 32768.0* 16.0* 9.8;
-	linear_acceleration[2] = ( short (UartData_[index_+ 7]<< 8 | UartData_[index_+ 6]))/ 32768.0* 16.0* 9.8;
-	wt61c_imu.linear_acceleration.x = linear_acceleration[0];
-	wt61c_imu.linear_acceleration.y = linear_acceleration[1];
-	wt61c_imu.linear_acceleration.z = linear_acceleration[2];
-	// ROS_INFO("wt61c_imu.linear_acceleration.x = %f", wt61c_imu.linear_acceleration.x);
-	// ROS_INFO("wt61c_imu.linear_acceleration.y = %f", wt61c_imu.linear_acceleration.y);
-	// ROS_INFO("wt61c_imu.linear_acceleration.z = %f", wt61c_imu.linear_acceleration.z);
-	// 
-	angular_velocity[0] = (short (UartData_[index_+ 14]<< 8 | UartData_[index_+ 13]))/ 32768.0* 2000* PI/180;
-	angular_velocity[1] = (short (UartData_[index_+ 16]<< 8 | UartData_[index_+ 15]))/ 32768.0* 2000* PI/180;
-	angular_velocity[2] = (short (UartData_[index_+ 18]<< 8 | UartData_[index_+ 17]))/ 32768.0* 2000* PI/180;
-	wt61c_imu.angular_velocity.x = angular_velocity[0];
-	wt61c_imu.angular_velocity.y = angular_velocity[1];
-	wt61c_imu.angular_velocity.z = angular_velocity[2];
-	// ROS_INFO("wt61c_imu.angular_velocity.x = %f", wt61c_imu.angular_velocity.x);
-	// ROS_INFO("wt61c_imu.angular_velocity.y = %f", wt61c_imu.angular_velocity.y);
-	// ROS_INFO("wt61c_imu.angular_velocity.z = %f", wt61c_imu.angular_velocity.z);
-	
-	orientation[0] = (short(UartData_[index_+ 25]<< 8 | UartData_[index_+ 24]))/ 32768.0* PI;
-	orientation[1] = (short(UartData_[index_+ 27]<< 8 | UartData_[index_+ 26]))/ 32768.0* PI;
-	orientation[2] = (short(UartData_[index_+ 29]<< 8 | UartData_[index_+ 28]))/ 32768.0* PI;
-	// wt61c_imu.orientation.x = sin(orientation[0]/2)* cos(orientation[1]/2)* cos(orientation[2]/2)- cos(orientation[0]/2)* sin(orientation[1]/2)* sin(orientation[2]/2);
-	// wt61c_imu.orientation.y = sin(orientation[0]/2)* cos(orientation[1]/2)* sin(orientation[2]/2)+ cos(orientation[0]/2)* sin(orientation[1]/2)* cos(orientation[2]/2);
-	// wt61c_imu.orientation.z = cos(orientation[0]/2)* cos(orientation[1]/2)* sin(orientation[2]/2)- sin(orientation[0]/2)* sin(orientation[1]/2)* cos(orientation[2]/2);
-	// wt61c_imu.orientation.w = cos(orientation[0]/2)* cos(orientation[1]/2)* cos(orientation[2]/2)+ sin(orientation[0]/2)* sin(orientation[1]/2)* sin(orientation[2]/2);
-	quate.setRPY(orientation[0], orientation[1], orientation[2]);
-	wt61c_imu.orientation.x = quate[0];
-	wt61c_imu.orientation.y = quate[1];
-	wt61c_imu.orientation.z = quate[2];
-	wt61c_imu.orientation.w = quate[3];
-	// turtle.linear.x = orientation[0]*(-1);
-	// turtle.angular.z = orientation[1]*(-1);
-	// ROS_INFO("wt61c_imu.orientation.x = %f", wt61c_imu.orientation.x);
-	// ROS_INFO("wt61c_imu.orientation.y = %f", wt61c_imu.orientation.y);
-	// ROS_INFO("wt61c_imu.orientation.z = %f", wt61c_imu.orientation.z);
-	// ROS_INFO("wt61c_imu.orientation.w = %f", wt61c_imu.orientation.w);
+bool WTU::Wt61cUart::verifyChecksum() const
+{
 
-	wt61c_pub_.publish(wt61c_imu);
-	
-	//delate the old date	
-	index_ =index_+ 32;
-	UartData_.erase(UartData_.begin(),UartData_.begin()+index_);
-	index_ = 0;
-	ROS_INFO("The data has been pub.");	
-	// wt61c_turtle_.publish(turtle);
+	int validSections = 0;
+	for (int sectionStart : {0, 11, 22})
+	{
+		// std::stringstream ss;
+		uint8_t sum = 0x00; // Reset sum for each section
+		for (int i = sectionStart; i < sectionStart + 10; i++)
+		{
+			sum += uart_data_[header_index_ + i];
+			// ss << std::uppercase << std::setfill('0') << std::setw(2) << std::hex << int(uart_data_[header_index_ + i]) << " ";
+		}
+		// std::cout << ss.str() << std::endl;
+		if (uart_data_[header_index_ + sectionStart + 10] == sum)
+			validSections++;
+		else
+			ROS_INFO("Invalid Checksum of %d (Received %d != Calculated %d)", sectionStart, uart_data_[header_index_ + sectionStart + 10], sum);
+	}
+	return validSections == 3;
+}
 
-	return 0;
+void WTU::Wt61cUart::clearBuffer()
+{
+	uart_data_ = std::vector<uint8_t>();
+}
+
+void WTU::Wt61cUart::decodeAndPublish()
+{
+	sensor_msgs::Imu imu_msg; // IMU message for publishing
+	imu_msg.header.stamp = ros::Time::now();
+	imu_msg.header.frame_id = "imu"; // Frame ID for the IMU data
+
+	// Convert and assign linear acceleration values
+	imu_msg.linear_acceleration.x = static_cast<int16_t>((uart_data_[header_index_ + 3] << 8) + uart_data_[header_index_ + 2]) / 32768.0 * 16.0 * 9.8;
+	imu_msg.linear_acceleration.y = static_cast<int16_t>((uart_data_[header_index_ + 5] << 8) + uart_data_[header_index_ + 4]) / 32768.0 * 16.0 * 9.8;
+	imu_msg.linear_acceleration.z = static_cast<int16_t>((uart_data_[header_index_ + 7] << 8) + uart_data_[header_index_ + 6]) / 32768.0 * 16.0 * 9.8;
+
+	// Convert and assign angular velocity values
+	imu_msg.angular_velocity.x = static_cast<int16_t>((uart_data_[header_index_ + 14] << 8) + uart_data_[header_index_ + 13]) / 32768.0 * 2000.0 * M_PI / 180.0;
+	imu_msg.angular_velocity.y = static_cast<int16_t>((uart_data_[header_index_ + 16] << 8) + uart_data_[header_index_ + 15]) / 32768.0 * 2000.0 * M_PI / 180.0;
+	imu_msg.angular_velocity.z = static_cast<int16_t>((uart_data_[header_index_ + 18] << 8) + uart_data_[header_index_ + 17]) / 32768.0 * 2000.0 * M_PI / 180.0;
+
+	// Convert and assign orientation (roll, pitch, yaw) using a quaternion
+	tf2::Quaternion quaternion;
+
+	double roll = static_cast<int16_t>((uart_data_[header_index_ + 25] << 8) + uart_data_[header_index_ + 24]) / 32768.0 * M_PI;
+	double pitch = static_cast<int16_t>((uart_data_[header_index_ + 27] << 8) + uart_data_[header_index_ + 26]) / 32768.0 * M_PI;
+	double yaw = static_cast<int16_t>((uart_data_[header_index_ + 29] << 8) + uart_data_[header_index_ + 28]) / 32768.0 * M_PI;
+
+	quaternion.setRPY(roll, pitch, yaw);
+	imu_msg.orientation = tf2::toMsg(quaternion);
+
+	pub_.publish(imu_msg); // Publish the IMU message
 }

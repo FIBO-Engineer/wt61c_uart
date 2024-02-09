@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<launch>
+	<node pkg="wt61c_uart" type="wt61c_uart_node" name="wt61c_uart" output="screen">
+		<param name="dev_path" type="string" value="/dev/ttyUSB0" />
+		<param name="baud" type="int" value="115200" />
+	</node>
+</launch>
