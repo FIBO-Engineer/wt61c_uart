@@ -1,21 +1,22 @@
 #include "wt61c_uart.h"
 #include <tf2_geometry_msgs/tf2_geometry_msgs.h>
 
-WTU::Wt61cUart::Wt61cUart(ros::NodeHandle &nh)
+wt61c_uart::Wt61cUart::Wt61cUart(ros::NodeHandle &nh)
 {
 	// Retrieve parameters without specifying the node name and without using getParamCached
 	nh.param<std::string>("dev_path", dev_path_, "/dev/ttyUSB0");
 	nh.param<int>("baud", baud_, 115200);
 
-	pub_ = nh.advertise<sensor_msgs::Imu>("/imu/data", 1);
+	imu_pub_ = nh.advertise<sensor_msgs::Imu>("/imu/data", 1);
+	write_srv_ = nh.advertiseService("/imu/cmd", &Wt61cUart::write, this);
 }
 
-WTU::Wt61cUart::~Wt61cUart()
+wt61c_uart::Wt61cUart::~Wt61cUart()
 {
 	shutdown();
 }
 
-bool WTU::Wt61cUart::initialize()
+bool wt61c_uart::Wt61cUart::initialize()
 {
 	try
 	{
@@ -54,7 +55,7 @@ bool WTU::Wt61cUart::initialize()
 	}
 }
 
-void WTU::Wt61cUart::shutdown()
+void wt61c_uart::Wt61cUart::shutdown()
 {
 	std::cout << "[WT61C IMU] Shutting down." << std::endl;
 	if (serial_.isOpen())
@@ -65,7 +66,7 @@ void WTU::Wt61cUart::shutdown()
 }
 
 // read data function
-void WTU::Wt61cUart::retrieveData()
+void wt61c_uart::Wt61cUart::retrieveData()
 {
 	constexpr int packet_size = 33;
 	while (serial_.waitReadable())
@@ -87,7 +88,7 @@ void WTU::Wt61cUart::retrieveData()
 	throw std::runtime_error("Serial port not readable (timeout or interruption).");
 }
 
-bool WTU::Wt61cUart::verifyChecksum() const
+bool wt61c_uart::Wt61cUart::verifyChecksum() const
 {
 
 	int validSections = 0;
@@ -104,17 +105,12 @@ bool WTU::Wt61cUart::verifyChecksum() const
 		if (uart_data_[header_index_ + sectionStart + 10] == sum)
 			validSections++;
 		else
-			ROS_INFO("Invalid Checksum of %d (Received %d != Calculated %d)", sectionStart, uart_data_[header_index_ + sectionStart + 10], sum);
+			ROS_INFO("[WT61C IMU] Invalid Checksum of %d (Received %d != Calculated %d)", sectionStart, uart_data_[header_index_ + sectionStart + 10], sum);
 	}
 	return validSections == 3;
 }
 
-void WTU::Wt61cUart::clearBuffer()
-{
-	uart_data_ = std::vector<uint8_t>();
-}
-
-void WTU::Wt61cUart::decodeAndPublish()
+void wt61c_uart::Wt61cUart::decodeAndPublish()
 {
 	sensor_msgs::Imu imu_msg; // IMU message for publishing
 	imu_msg.header.stamp = ros::Time::now();
@@ -140,5 +136,68 @@ void WTU::Wt61cUart::decodeAndPublish()
 	quaternion.setRPY(roll, pitch, yaw);
 	imu_msg.orientation = tf2::toMsg(quaternion);
 
-	pub_.publish(imu_msg); // Publish the IMU message
+	imu_pub_.publish(imu_msg); // Publish the IMU message
+}
+
+void wt61c_uart::Wt61cUart::clearBuffer()
+{
+	uart_data_ = std::vector<uint8_t>();
+}
+
+bool wt61c_uart::Wt61cUart::write(wt61c_uart::Write::Request &request, wt61c_uart::Write::Response &response)
+{
+	Command cmd = static_cast<Command>(request.data);
+	switch (cmd)
+	{
+	case Command::resetYawAngle:
+		response.success = true;
+		response.message = "Reset yaw angle command sent.";
+		break;
+	case Command::toggleSleepMode:
+		response.success = true;
+		response.message = "Toggle sleep mode sent.";
+		break;
+	case Command::serialMode:
+		response.success = true;
+		response.message = "Serial mode sent.";
+		break;
+	case Command::i2CMode:
+		response.success = false;
+		response.message = "I2C mode not allowed! Please change with software or change the code.";
+		break;
+	case Command::serial115200:
+		response.success = true;
+		response.message = "Serial baudrate 115200 sent.";
+		break;
+	case Command::serial9600:
+		response.success = true;
+		response.message = "Serial baudrate 9600 sent.";
+		break;
+
+	case Command::horizontalInstallation:
+		response.success = true;
+		response.message = "Horizontal installation sent.";
+		break;
+
+	case Command::verticalInstallation:
+		response.success = true;
+		response.message = "Vertical installation sent.";
+		break;
+
+	case Command::calibrateAcceleration:
+		response.success = true;
+		response.message = "Acceleration calibration sent.";
+		break;
+
+	default:
+		response.success = false;
+		response.message = "Unrecognized command.";
+		break;
+	}
+	if (response.success)
+	{
+		std::vector<uint8_t> output_data{0xFF, 0xAA, request.data};
+		serial_.write(output_data);
+	}
+	return true;
 }

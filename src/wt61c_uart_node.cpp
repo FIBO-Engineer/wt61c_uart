@@ -7,11 +7,11 @@ int main(int argc, char **argv)
 	ros::init(argc, argv, "wt61c_uart_node");
 	ros::NodeHandle nh("~");
 
-	WTU::Wt61cUart wt61c_uart(nh); // initilize the uart parameter
+	wt61c_uart::Wt61cUart wt61c_uart(nh); // initilize the uart parameter
 
 	while (!wt61c_uart.initialize())
 	{
-		ROS_ERROR("Unable to initialize WT61C IMU, retrying in 1 second.");
+		ROS_ERROR("[WT61C IMU] Unable to initialize, retrying in 1 second.");
 		wt61c_uart.shutdown();
 		ros::Duration(1.0).sleep();
 	}
@@ -31,10 +31,11 @@ int main(int argc, char **argv)
 		}
 		catch (const std::runtime_error &e)
 		{
-			ROS_ERROR("std::runtime error: %s, restart in 1 second.", e.what());
+			ROS_ERROR("[WT61C IMU] std::runtime error: %s, restart in 1 second.", e.what());
 			ros::Duration(1.0).sleep();
 			wt61c_uart.initialize();
 		}
+		ros::spinOnce();
 		loop_rate.sleep();
 	}
 	return 0;

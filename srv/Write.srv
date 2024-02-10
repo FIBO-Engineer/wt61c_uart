@@ -1,0 +1,15 @@
+# Command List
+uint8 RESET_YAW_ANGLE = 82
+uint8 TOGGLE_SLEEP_MODE = 96
+uint8 SERIAL_MODE = 97 
+uint8 I2C_MODE = 98 # Dangerous
+uint8 SERIAL_115200 = 99
+uint8 SERIAL_9600 = 100
+uint8 HORIZONTAL_INSTALLATION = 101
+uint8 VERTICAL_INSTALLATION = 102
+uint8 CALIBRATE_ACCELERATION = 103
+
+uint8 data
+---
+bool success
+string message
