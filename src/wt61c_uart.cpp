@@ -123,7 +123,7 @@ void wt61c_uart::Wt61cUart::decodeAndPublish()
 
 	sensor_msgs::Imu imu_msg; // IMU message for publishing
 	imu_msg.header.stamp = ros::Time::now();
-	imu_msg.header.frame_id = "imu"; // Frame ID for the IMU data
+	imu_msg.header.frame_id = "imu_link"; // Frame ID for the IMU data
 
 	// Convert and assign linear acceleration values
 	imu_msg.linear_acceleration.x = static_cast<int16_t>((uart_data_[header_index_ + 3] << 8) + uart_data_[header_index_ + 2]) / 32768.0 * 16.0 * 9.8;
