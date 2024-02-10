@@ -6,6 +6,7 @@ wt61c_uart::Wt61cUart::Wt61cUart(ros::NodeHandle &nh)
 	// Retrieve parameters without specifying the node name and without using getParamCached
 	nh.param<std::string>("dev_path", dev_path_, "/dev/ttyUSB0");
 	nh.param<int>("baud", baud_, 115200);
+	nh.param<std::string>("frame_id", frame_id_, "imu_link");
 
 	imu_pub_ = nh.advertise<sensor_msgs::Imu>("/imu/data", 1);
 	write_srv_ = nh.advertiseService("/imu/cmd", &Wt61cUart::write, this);
@@ -123,7 +124,7 @@ void wt61c_uart::Wt61cUart::decodeAndPublish()
 
 	sensor_msgs::Imu imu_msg; // IMU message for publishing
 	imu_msg.header.stamp = ros::Time::now();
-	imu_msg.header.frame_id = "imu_link"; // Frame ID for the IMU data
+	imu_msg.header.frame_id = frame_id_; // Frame ID for the IMU data
 
 	// Convert and assign linear acceleration values
 	imu_msg.linear_acceleration.x = static_cast<int16_t>((uart_data_[header_index_ + 3] << 8) + uart_data_[header_index_ + 2]) / 32768.0 * 16.0 * 9.8;

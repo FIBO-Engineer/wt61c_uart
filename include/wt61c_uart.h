@@ -45,6 +45,7 @@ namespace wt61c_uart
 	private:
 		std::string dev_path_;
 		int baud_;
+		std::string frame_id_;
 
 		/* Serial Instance*/
 		serial::Serial serial_;
