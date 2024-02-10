@@ -112,6 +112,15 @@ bool wt61c_uart::Wt61cUart::verifyChecksum() const
 
 void wt61c_uart::Wt61cUart::decodeAndPublish()
 {
+	// https://witmotion-sensor.com/products/witmotion-wt61c-high-accuracy-accelerometer-sensor-6-axis-acceleration-16g-gyro-angle-xy-0-05-accuracy-with-kalman-filtering-mpu6050-ahrs-imu-unaffected-by-magnetic-field-for-arduino
+	constexpr double linear_acceleration_covariance = (0.01 * 9.80665) * (0.01 * 9.80665);
+	constexpr double angular_velocity_covariance_dynamic = (0.1 * M_PI / 180.0) * (0.1 * M_PI / 180.0);
+	constexpr double angular_velocity_covariance_static = (0.05 * M_PI / 180.0) * (0.05 * M_PI / 180.0);
+	constexpr double sampling_period = 0.01;
+	constexpr double d_orientation_covariance_static = sampling_period * sampling_period * angular_velocity_covariance_static;
+	constexpr double d_orientation_covariance_dynamic = sampling_period * sampling_period * angular_velocity_covariance_dynamic;
+	static double orientation_covariance = 0.0;
+
 	sensor_msgs::Imu imu_msg; // IMU message for publishing
 	imu_msg.header.stamp = ros::Time::now();
 	imu_msg.header.frame_id = "imu"; // Frame ID for the IMU data
@@ -120,11 +129,30 @@ void wt61c_uart::Wt61cUart::decodeAndPublish()
 	imu_msg.linear_acceleration.x = static_cast<int16_t>((uart_data_[header_index_ + 3] << 8) + uart_data_[header_index_ + 2]) / 32768.0 * 16.0 * 9.8;
 	imu_msg.linear_acceleration.y = static_cast<int16_t>((uart_data_[header_index_ + 5] << 8) + uart_data_[header_index_ + 4]) / 32768.0 * 16.0 * 9.8;
 	imu_msg.linear_acceleration.z = static_cast<int16_t>((uart_data_[header_index_ + 7] << 8) + uart_data_[header_index_ + 6]) / 32768.0 * 16.0 * 9.8;
+	imu_msg.linear_acceleration_covariance[0] = linear_acceleration_covariance;
+	imu_msg.linear_acceleration_covariance[4] = linear_acceleration_covariance;
+	imu_msg.linear_acceleration_covariance[8] = linear_acceleration_covariance;
 
 	// Convert and assign angular velocity values
 	imu_msg.angular_velocity.x = static_cast<int16_t>((uart_data_[header_index_ + 14] << 8) + uart_data_[header_index_ + 13]) / 32768.0 * 2000.0 * M_PI / 180.0;
 	imu_msg.angular_velocity.y = static_cast<int16_t>((uart_data_[header_index_ + 16] << 8) + uart_data_[header_index_ + 15]) / 32768.0 * 2000.0 * M_PI / 180.0;
 	imu_msg.angular_velocity.z = static_cast<int16_t>((uart_data_[header_index_ + 18] << 8) + uart_data_[header_index_ + 17]) / 32768.0 * 2000.0 * M_PI / 180.0;
+
+	bool isDynamic = imu_msg.angular_velocity.x + imu_msg.angular_velocity.y + imu_msg.angular_velocity.z != 0.0;
+
+	if (isDynamic)
+	{
+		imu_msg.angular_velocity_covariance[0] = angular_velocity_covariance_dynamic;
+		imu_msg.angular_velocity_covariance[4] = angular_velocity_covariance_dynamic;
+		imu_msg.angular_velocity_covariance[8] = angular_velocity_covariance_dynamic;
+		orientation_covariance += d_orientation_covariance_dynamic;
+	}
+	else
+	{
+		imu_msg.angular_velocity_covariance[0] = angular_velocity_covariance_static;
+		imu_msg.angular_velocity_covariance[4] = angular_velocity_covariance_static;
+		orientation_covariance += d_orientation_covariance_static;
+	}
 
 	// Convert and assign orientation (roll, pitch, yaw) using a quaternion
 	tf2::Quaternion quaternion;
@@ -135,6 +163,9 @@ void wt61c_uart::Wt61cUart::decodeAndPublish()
 
 	quaternion.setRPY(roll, pitch, yaw);
 	imu_msg.orientation = tf2::toMsg(quaternion);
+	imu_msg.orientation_covariance[0] += orientation_covariance;
+	imu_msg.orientation_covariance[4] += orientation_covariance;
+	imu_msg.orientation_covariance[8] += orientation_covariance;
 
 	imu_pub_.publish(imu_msg); // Publish the IMU message
 }
